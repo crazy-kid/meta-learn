@@ -54,7 +54,7 @@ def trans2sptorch(M, dtype=torch.float32):
     return torch.sparse_csr_tensor(row, col, val, dtype=dtype)
 
 
-def spnumpy2sptorch(M, dtype=torch.float32, device="cpu"):
+def spnumpy2sptorch(M, dtype=torch.float32, device="cpu") -> torch.Tensor:
     '''
     The following codes are found in the webset: 
     https://www.jianshu.com/p/eb10322be38b
@@ -74,7 +74,7 @@ def spnumpy2sptorch(M, dtype=torch.float32, device="cpu"):
     return M.to_sparse_csr()
 
 
-def sptorch2spnumpy(M, dtype=np.float64):
+def sptorch2spnumpy(M, dtype=np.float64) -> sps.csr_matrix:
     row = np.array(M.crow_indices()).astype(np.int64)
     col = np.array(M.col_indices()).astype(np.int64)
     value = np.array(M.values(), dtype=dtype)
@@ -110,9 +110,9 @@ def construct_measurement_matrix(xs, V):
     bbt = mesh.bounding_box_tree()
     sdim = dolfin_element.space_dimension()
     v = np.zeros(sdim)
-    rows = np.zeros(nx*sdim, dtype='int')
-    cols = np.zeros(nx*sdim, dtype='int')
-    vals = np.zeros(nx*sdim)
+    rows = np.zeros(nx * sdim, dtype='int')
+    cols = np.zeros(nx * sdim, dtype='int')
+    vals = np.zeros(nx * sdim)
     for k in range(nx):
         # Loop over all interpolation points
         x = xs[k, :]
@@ -126,7 +126,7 @@ def construct_measurement_matrix(xs, V):
         xvert = coords[cells[cell_id, :], :]
         # Evaluate the basis functions for the cell at x
         v = dolfin_element.evaluate_basis_all(x, xvert, cell_id)
-        jj = np.arange(sdim*k, sdim*(k+1))
+        jj = np.arange(sdim * k, sdim * (k + 1))
         rows[jj] = k
         # Find the dofs for the cell
         cols[jj] = dofmap.cell_dofs(cell_id)
@@ -161,8 +161,8 @@ def my_project(fun, V=None, flag='only_vec'):
         V = fun.function_space()
     u = fe.TrialFunction(V)
     v = fe.TestFunction(V)
-    a = fe.assemble(fe.inner(u, v)*fe.dx)
-    b = fe.assemble(fe.inner(fun, v)*fe.dx)
+    a = fe.assemble(fe.inner(u, v) * fe.dx)
+    b = fe.assemble(fe.inner(fun, v) * fe.dx)
     A = trans2spnumpy(a)
     sol = fe.Function(V)
     sol.vector()[:] = spsl.spsolve(A, b[:])
@@ -181,18 +181,18 @@ class MY_Project(object):
         self.V = V
         self.u = fe.TrialFunction(V)
         self.v = fe.TestFunction(V)
-        A_ = fe.assemble(fe.inner(self.u, self.v)*fe.dx)
+        A_ = fe.assemble(fe.inner(self.u, self.v) * fe.dx)
         self.A = trans2spnumpy(A_)
 
     def project(self, fun):
-        b_ = fe.assemble(fe.inner(fun, self.v)*fe.dx)
+        b_ = fe.assemble(fe.inner(fun, self.v) * fe.dx)
         return spsl.spsolve(self.A, b_[:])
 
 ############################################################################
 
 
 def make_symmetrize(A):
-    return 0.5*(A.T + A)
+    return 0.5 * (A.T + A)
 
 ############################################################################
 
@@ -203,8 +203,8 @@ def smoothing(fun, bc=None, alpha=0.1):
     v = fe.TestFunction(V)
     alpha = fe.Constant(str(alpha))
     A = fe.assemble(
-        (alpha*fe.inner(fe.grad(u), fe.grad(v)) + fe.inner(u, v))*fe.dx)
-    b = fe.assemble(fun*v*fe.dx)
+        (alpha * fe.inner(fe.grad(u), fe.grad(v)) + fe.inner(u, v)) * fe.dx)
+    b = fe.assemble(fun * v * fe.dx)
     if bc is not None:
         bc.apply(A, b)
     sol = fe.Function(V)
@@ -223,9 +223,9 @@ def relative_error(domain, u, u_truth):
         u = fe.interpolate(u, domain.function_space)
         u_truth = fe.interpolate(u_truth, domain.function_space)
         a, b = u, u_truth
-    fenzi = fe.assemble(fe.inner(a-b, a-b)*fe.dx)
-    fenmu = fe.assemble(fe.inner(b, b)*fe.dx)
-    return fenzi/fenmu
+    fenzi = fe.assemble(fe.inner(a - b, a - b) * fe.dx)
+    fenmu = fe.assemble(fe.inner(b, b) * fe.dx)
+    return fenzi / fenmu
 
 ############################################################################
 

@@ -34,22 +34,23 @@ import torch.optim as optim
 
 
 class Gaussian1DFiniteDifference(object):
-    def __init__(self, nx: int, a_fun: float = 1.0, alpha: float = 1.0, mean_fun: np.ndarray = None):
+    def __init__(self, nx: int, a_fun: float | int = 1.0, alpha: float = 1.0, mean_fun: np.ndarray = None):
         if mean_fun is None:
             self.mean_fun: np.ndarray = np.zeros(nx)
         self.nx: int = nx
         if type(a_fun) == float or type(a_fun) == int:
-            self.a_fun = a_fun * np.ones(nx)
-        self.alpha = alpha
+            self.a_fun: np.ndarray = a_fun * np.ones(nx)
+        self.alpha: float = alpha
         self.construct_matrix()
-        self.is_tensor = False
+        self.is_tensor: bool = False
 
     def construct_matrix(self):
-        rows = np.arange(self.nx)
-        cols = rows
-        self.aI = sps.coo_matrix(
+        rows: np.ndarray = np.arange(self.nx)
+        cols: np.ndarray = rows
+        # aI 对角线是a的稀疏矩阵
+        self.aI: sps.coo_matrix = sps.coo_matrix(  # A sparse matrix in coordinate format. a_fun:矩阵元素的值 (rows,cols)：对应元素的坐标 shape:稀疏矩阵的大小
             (self.a_fun, (rows, cols)), shape=[self.nx, self.nx])
-        self.aI.tocsr()
+        self.aI.tocsr()  # Convert this matrix to Compressed Sparse Row format 因为coordinate format 可能会对同一个坐标多次标注值
         t1 = sps.coo_matrix(
             (2 * np.ones(self.nx), (rows, cols)), shape=[self.nx, self.nx])
         rows = np.arange(self.nx - 1)
@@ -62,73 +63,87 @@ class Gaussian1DFiniteDifference(object):
         t1.tocsr()
         t2.tocsr()
         t3.tocsr()
-        self.Delta = self.alpha * (t1 + t2 + t3) * (self.nx * self.nx)
+        self.Delta: sps.coo_matrix = self.alpha * (t1 + t2 + t3) * (self.nx * self.nx)
+        '''
+        t1 + t2 + t3 = [  2, -1,  0,  0,...,  0]
+                       [ -1,  2, -1,  0,...,  0]  
+                          .                   .
+                          .                   .
+                          .                   .
+                       [  0,  0,..., -1,  2, -1]    
+                       [  0,  0,...,  0, -1,  2]    
+        '''
 
-    def trans2learnable(self, learn_mean=False, learn_a=False):
-        self.a_fun_learn = torch.tensor(
+    # 把ndarray转为Tensor
+    def trans2learnable(self, learn_mean: bool = False, learn_a: bool = False):
+        self.a_fun_learn: torch.Tensor = torch.tensor(
             np.log(self.a_fun), dtype=torch.float64, requires_grad=learn_a
         )
-        self.aI_torch = spnumpy2sptorch(self.aI, dtype=torch.float64)
-        self.Delta_torch = spnumpy2sptorch(self.Delta, dtype=torch.float64)
-        self.mean_fun_learn = torch.tensor(
+        self.aI_torch: torch.Tensor = spnumpy2sptorch(self.aI, dtype=torch.float64)
+        self.Delta_torch: torch.Tensor = spnumpy2sptorch(self.Delta, dtype=torch.float64)
+        self.mean_fun_learn: torch.Tensor = torch.tensor(
             self.mean_fun, dtype=torch.float64, requires_grad=learn_mean
         )
         self.is_tensor = True
 
+    # 把Tensor转化为ndarray
     def trans2numpy(self):
         if self.is_tensor == True:
-            self.mean_fun = np.array(self.mean_fun.cpu().detach().numpy())
-            self.a_fun = np.array(
+            self.mean_fun: np.ndarray = np.array(self.mean_fun.cpu().detach().numpy())
+            self.a_fun: np.ndarray = np.array(
                 torch.exp(self.a_fun_learn).cpu().detach().numpy())
-            self.aI = sptorch2spnumpy(self.aI_torch)
-            self.Delta = sptorch2spnumpy(self.Delta_torch)
-            self.is_tensor = False
+            self.aI: sps.csr_matrix = sptorch2spnumpy(self.aI_torch)
+            self.Delta: sps.csr_matrix = sptorch2spnumpy(self.Delta_torch)
+            self.is_tensor: bool = False
 
-    def generate_sample_zero_mean(self, KK):
-        n = np.random.normal(0, 1, (self.nx,))
-        sample = spsl.spsolve(KK, n)
+    # KK 是什么 这个解方程的原理是啥？
+    def generate_sample_zero_mean(self, KK: sps.csr_matrix | sps.csc_matrix) -> np.ndarray:
+        n: np.ndarray = np.random.normal(0, 1, (self.nx,))  # 生成长度为nx的正态随机向量
+        sample = spsl.spsolve(KK, n)  # 解方程组 KK*sample = n
         return sample
 
-    def generate_sample(self):
+    def generate_sample(self) -> np.ndarray | torch.Tensor:
         if self.is_tensor == False:
-            KK = self.aI + self.Delta
-            sample_ = self.generate_sample_zero_mean(KK)
-            sample = self.mean_fun + sample_
+            KK: sps.csr_matrix = self.aI + self.Delta
+            sample_: np.ndarray = self.generate_sample_zero_mean(KK)
+            sample: np.ndarray = self.mean_fun + sample_
             return sample
         elif self.is_tensor == True:
-            row_idx = torch.arange(self.nx + 1)
-            row_idx[-1] = self.nx
-            col_idx = torch.arange(self.nx)
-            val = torch.exp(self.a_fun_learn)
-            self.aI_torch = torch.sparse_csr_tensor(
+            row_idx: torch.Tensor = torch.arange(self.nx + 1)
+            row_idx[-1] = self.nx  # 修改最后一个分量
+            col_idx: torch.Tensor = torch.arange(self.nx)
+            val: torch.Tensor = torch.exp(self.a_fun_learn)  # 为什么这里要取指数?
+            self.aI_torch: torch.Tensor = torch.sparse_csr_tensor(
                 row_idx, col_idx, val, dtype=torch.float32
             )
             KK = self.aI_torch + self.Delta_torch
-            sample_ = self.generate_sample_zero_mean(sptorch2spnumpy(KK))
-            sample_ = torch.tensor(
+            sample_: np.ndarray = self.generate_sample_zero_mean(sptorch2spnumpy(KK))
+            sample_: torch.Tensor = torch.tensor(
                 sample_, dtype=torch.float32, requires_grad=False)
             sample = self.mean_fun_learn + sample_
             return sample
 
-    def generate_sample_learn(self):
+    # 这个函数有存在必要吗?
+    def generate_sample_learn(self) -> np.ndarray | torch.Tensor:
         return self.generate_sample()
 
-    def evaluate_CM_inner(self, u_vec, v_vec=None):
+    def evaluate_CM_inner(self, u_vec: np.ndarray | torch.Tensor, v_vec: np.ndarray | torch.Tensor = None) -> sps.csr_matrix | torch.Tensor:
         if v_vec is None:
             v_vec = u_vec
         if self.is_tensor == False:
-            temp1 = u_vec - self.mean_fun
-            temp2 = v_vec - self.mean_fun
-            KK = self.aI + self.Delta
-            out = KK @ (KK @ temp1)
+            temp1: np.ndarray = u_vec - self.mean_fun
+            temp2: np.ndarray = v_vec - self.mean_fun
+            KK: sps.csr_matrix = self.aI + self.Delta
+            out: sps.csr_matrix = KK @ (KK @ temp1)  # @是数学意义上的矩阵乘法，shape不对时会报错 为什么加()?
             out = KK.T @ (KK.T @ out)
             out = temp2 @ out
+            # out = temp2 * (KK).T * (KK).T * KK * KK * temp1
             return out
         elif self.is_tensor == True:
-            temp1 = u_vec - self.mean_fun_learn
-            temp2 = v_vec - self.mean_fun_learn
+            temp1: torch.Tensor = u_vec - self.mean_fun_learn
+            temp2: torch.Tensor = v_vec - self.mean_fun_learn
             KK = self.aI_torch + self.Delta_torch
-            out = KK @ (KK @ temp1)
+            out: torch.Tensor = KK @ (KK @ temp1)
             out = KK @ (KK @ out)
             out = temp2 @ out
             return out
